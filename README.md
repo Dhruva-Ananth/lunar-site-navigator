@@ -10,6 +10,13 @@ Built for the NASA Space Apps Challenge. Everything runs in the browser from pla
 be hosted on GitHub Pages.
 
 
+> **Update — LODESTAR, six steps and a PDF report.** The app is now titled LODESTAR (Lunar Outpost Decision Engine for Site
+> Targeting And Reachability). A new step 5, **Power** (`js/power.js`), estimates sunlight at the selected site from the LOLA
+> elevation grid, the output of a vertical mast array for a chosen solar-cell efficiency, the storage needed for the longest
+> darkness, and compares the total mass with a 40 kWe fission unit. Step 6, **Mission**, can add the chosen power system to the
+> landed mass and has a **Download design report (PDF)** button (`js/report.js`) that writes the requirements and the design for
+> that run. The PDF is built in the browser with the vendored jsPDF and jsPDF-AutoTable (see `vendor/LICENSES.md`).
+>
 > **Update — five-step wizard.** The site is now a guided flow: 1 Resources → 2 Terrain → 3 Comms → 4 Select site (matching
 > areas) → 5 Mission (launcher + orbital configuration). Launcher data lives in `assets/launchers.json` (each entry has its
 > source and says whether the trans-lunar figure is published or estimated); rocket pictures are original to-scale schematics

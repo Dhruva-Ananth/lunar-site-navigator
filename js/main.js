@@ -1,5 +1,6 @@
-// Lunar Landing Site Navigator — five-step wizard: UI, globe and glue. Plain ES module, no build step.
-// Steps: 1 Resources → 2 Terrain → 3 Comms → 4 Select site (areas) → 5 Mission (js/mission.js).
+// LODESTAR (Lunar Landing Site Navigator) — six-step wizard: UI, globe and glue. Plain ES module, no build step.
+// Steps: 1 Resources → 2 Terrain → 3 Comms → 4 Select site (areas) → 5 Power (js/power.js) → 6 Mission (js/mission.js).
+// The mission step can download a PDF design report (js/report.js).
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { loadManifest, loadLayer, sample, colormap, MOON_RADIUS_KM } from './data.js';
@@ -13,7 +14,7 @@ const D2R = Math.PI / 180;
 const SPHERE_KM2 = sphereAreaKm2(MOON_RADIUS_KM);
 const SLOPE_ID = '_slope', COMMS_ID = '_comms', SUIT_ID = '_suit';
 const CORE_IDS = ['h', 'fe', 'ti', 'th'];
-const STEP_NAMES = ['', 'Resources', 'Terrain', 'Comms', 'Select site', 'Mission'];
+const STEP_NAMES = ['', 'Resources', 'Terrain', 'Comms', 'Select site', 'Power', 'Mission'];
 const FALLBACK_COMMS_STATE = { mode: 'dte', relayId: null, dsnDishM: 34, band: 'X', maskDeg: 5 };
 const AREA_COLORS = [[95, 180, 255], [255, 209, 102], [6, 214, 160], [239, 71, 111], [199, 125, 255], [255, 159, 67],
   [72, 219, 251], [186, 220, 88], [255, 121, 198], [149, 175, 192]];
@@ -266,7 +267,7 @@ function flyTo(lat, lon, dist = null) {
 const _tmpV = new THREE.Vector3();
 function tick(now) {
   requestAnimationFrame(tick);
-  if (state.step === 5) return;
+  if (state.step >= 5) return;
   if (fly) {
     const t = Math.min(1, (now - fly.t0) / fly.dur);
     const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -930,7 +931,7 @@ function renderStepMessages() {
 // ---------- steps / navigation ----------
 function canEnter(n) {
   if (!state.ready) return n === 1;
-  if (n === 5) return state.sel.selected >= 0 && state.sel.areas.length > 0;
+  if (n >= 5) return state.sel.selected >= 0 && state.sel.areas.length > 0;
   return true;
 }
 function updateNav() {
@@ -942,22 +943,24 @@ function updateNav() {
   }
   const back = $('back'), next = $('next');
   back.disabled = state.step === 1;
-  next.hidden = state.step === 5;
-  next.textContent = state.step === 4 ? 'Plan mission →' : `Next: ${STEP_NAMES[state.step + 1] || ''} →`;
+  next.hidden = state.step === 6;
+  next.textContent = `Next: ${STEP_NAMES[state.step + 1] || ''} →`;
   next.disabled = !state.ready || (state.step === 4 && !canEnter(5));
   next.title = state.step === 4 && !canEnter(5) ? 'Select an area first' : '';
 }
 function goStep(n) {
-  n = clamp(n, 1, 5);
-  if (n === 5 && !canEnter(5)) return;
+  n = clamp(n, 1, 6);
+  if (n >= 5 && !canEnter(5)) return;
   const prev = state.step;
+  if (n >= 5 && prev <= 4) captureSiteImage();
   state.step = n; state.maxStep = Math.max(state.maxStep, n);
   document.body.dataset.step = n;
   for (let i = 1; i <= 4; i++) $('panel-' + i).hidden = i !== n;
   $('comms-col').hidden = n !== 3;
-  $('app').hidden = n === 5; $('mission').hidden = n !== 5;
+  $('app').hidden = n >= 5; $('power').hidden = n !== 5; $('mission').hidden = n !== 6;
   $('sidebar').scrollTop = 0;
-  if (n === 5) { renderFunnel(); updateNav(); enterMission(); return; }
+  if (n === 5) { renderFunnel(); updateNav(); enterPower(); return; }
+  if (n === 6) { renderFunnel(); updateNav(); enterMission(); return; }
   if (n === 3) ensureCommsMenu();
   // steps 1, 3 and 4 open on the suitability / areas view; step 2 keeps whatever overlay the user picked
   if (n !== 2 && (n !== prev || n === 4) && state.overlayId !== SUIT_ID) setOverlay(SUIT_ID);
@@ -989,15 +992,52 @@ async function ensureCommsMenu() {
   }
 }
 
-// ---------- step 5: mission ----------
+// ---------- steps 5–6: power, mission, design report ----------
+const design = { siteImage: null, power: null, mission: null };
+function selectedSite() {
+  const a = state.sel.areas[state.sel.selected];
+  return a ? { a, site: { lat: a.best.lat, lon: a.best.lon, label: `Area ${a.id} — ${fmtLatLon(a.best.lat, a.best.lon, 1)}`, areaKm2: a.areaKm2 } } : null;
+}
+function captureSiteImage() {              // the globe as the user left it in step 4, for the PDF report
+  try { renderer.render(scene, camera); design.siteImage = { url: canvas.toDataURL('image/jpeg', 0.85), w: canvas.width, h: canvas.height }; }
+  catch { design.siteImage = null; }
+}
+function stepFallback(box, title, what, e, site) {
+  box.textContent = '';
+  box.append(el('div', { class: 'mission-fallback' },
+    el('h2', { text: title }),
+    el('p', { text: `Selected site: ${site.label} (area ${fmtKm2(site.areaKm2)}).` }),
+    el('div', { class: 'pane-error', text: `${what} is unavailable:\n${e?.stack || e?.message || e}` }),
+    el('button', { text: '← Back to site selection', onclick: () => goStep(4) })));
+}
+let powerKey = null;
+async function enterPower() {
+  const sel = selectedSite();
+  if (!sel) { goStep(4); return; }
+  const key = JSON.stringify(sel.site), box = $('power');
+  if (powerKey === key && box.firstChild) return;      // same site: keep the user's power settings
+  powerKey = key; design.power = null; design.mission = null;
+  box.textContent = '';
+  const host = el('div', { class: 'power-host' });
+  box.append(host);
+  try {
+    const mod = await import('./power.js');
+    await mod.renderPower(host, { site: sel.site, onChange: p => { design.power = p; }, onBack: () => goStep(4), onNext: () => goStep(6) });
+  } catch (e) {
+    console.warn('[power] failed', e);
+    powerKey = null;
+    stepFallback(box, 'Surface power', 'Power estimate (js/power.js)', e, sel.site);
+  }
+}
 let missionKey = null;
 async function enterMission() {
-  const a = state.sel.areas[state.sel.selected];
-  if (!a) { goStep(4); return; }
-  const site = { lat: a.best.lat, lon: a.best.lon, label: `Area ${a.id} — ${fmtLatLon(a.best.lat, a.best.lon, 1)}`, areaKm2: a.areaKm2 };
-  const key = JSON.stringify(site);
+  const sel = selectedSite();
+  if (!sel) { goStep(4); return; }
+  const site = sel.site, p = design.power;
+  const power = p && Number.isFinite(p.systemMassKg) ? { systemMassKg: p.systemMassKg, systemText: p.systemText } : null;
+  const key = JSON.stringify({ site, power: power ? Math.round(power.systemMassKg) : 0 });
   const box = $('mission');
-  if (missionKey === key && box.firstChild) return; // same site: keep whatever the user set up there
+  if (missionKey === key && box.firstChild) return; // same site and power system: keep whatever the user set up there
   missionKey = key;
   box.textContent = '';
   const host = el('div', { class: 'mission-host' });
@@ -1005,17 +1045,56 @@ async function enterMission() {
   try {
     const mod = await import('./mission.js');
     if (typeof mod.renderMission !== 'function') throw new Error('js/mission.js does not export renderMission()');
-    await mod.renderMission(host, { site, onBack: () => goStep(4) });
+    await mod.renderMission(host, { site, power, onBack: () => goStep(5), onChange: m => { design.mission = m; }, onReport: downloadReport });
   } catch (e) {
     console.warn('[mission] failed', e);
     missionKey = null;
-    box.textContent = '';
-    box.append(el('div', { class: 'mission-fallback' },
-      el('h2', { text: 'Mission planning' }),
-      el('p', { text: `Selected site: ${site.label} (area ${fmtKm2(site.areaKm2)}).` }),
-      el('div', { class: 'pane-error', text: `Mission planner (js/mission.js) is unavailable:\n${e?.stack || e?.message || e}` }),
-      el('button', { text: '← Back to site selection', onclick: () => goStep(4) })));
+    stepFallback(box, 'Mission planning', 'Mission planner (js/mission.js)', e, site);
   }
+}
+
+// Everything chosen in this run, as plain data for js/report.js.
+async function buildDesign() {
+  const sel = selectedSite();
+  if (!sel) throw new Error('No site selected');
+  const { a, site } = sel, s = state.sel, t = state.terrain, c = state.comms, k = state.km2;
+  const meanOf = id => a.means?.find(m => m.id === id)?.v;
+  const at = id => { const g = state.G.get(id); return g ? g[a.best.index] : NaN; };
+  const now = new Date(), pad = n => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  let link = null, relayName = null;
+  try {
+    const mod = await commsModule();
+    if (typeof mod.linkTimes === 'function') link = mod.linkTimes(site.lat, site.lon, c.state);
+    if (c.state?.mode === 'relay') relayName = c.presets.find(p => p.id === c.state.relayId)?.name || c.state.relayId;
+  } catch (e) { console.warn('[report] link times unavailable', e); }
+  return {
+    app: { name: 'LODESTAR', full: 'Lunar Outpost Decision Engine for Site Targeting And Reachability' },
+    iteration: { id: `LODESTAR-${stamp}`, created: now.toISOString(), createdLocal: now.toLocaleString() },
+    demo: !!state.manifest?.demo,
+    site, siteImage: design.siteImage,
+    area: { id: a.id, rank: s.selected + 1, areaKm2: a.areaKm2, nCells: a.nCells, centroid: a.centroid, best: { lat: a.best.lat, lon: a.best.lon, score: a.best.score },
+      meanScore: a.meanScore, bbox: a.bbox },
+    selection: { keepPct: s.keepPct, minAreaKm2: s.minAreaKm2, nAreas: s.areas.length, totalKm2: s.km2, gridStepDeg: state.grid.step, scoreThreshold: s.thr },
+    funnel: [['Whole Moon', k[0]], ['After resource limits', k[1]], ['After terrain limits', k[2]], ['After comms limit', k[3]], ['In the matching areas', s.km2]]
+      .map(([name, km2]) => ({ name, km2, frac: km2 / SPHERE_KM2 })),
+    resources: state.resIds.map(id => ({ id, r: state.res.get(id), meta: state.layers.get(id).meta }))
+      .filter(x => x.r.weight > 0 || x.r.min != null || x.r.max != null)
+      .map(({ id, r, meta }) => ({ id, name: meta.name || id, units: meta.units || '', mission: meta.mission || '', weight: r.weight, prefer: r.prefer, min: r.min, max: r.max,
+        areaMean: meanOf(id), bestCell: at(id) })),
+    terrain: { elevMin: t.elevMin, elevMax: t.elevMax, slopeOn: t.slopeOn, slopeMax: t.slopeMax, slopeWeight: t.slopeWeight, latMin: Math.min(t.latMin, t.latMax), latMax: Math.max(t.latMin, t.latMax),
+      elevMean: meanOf('elev'), slopeMean: meanOf(SLOPE_ID), elevBest: at('elev'), slopeBest: at(SLOPE_ID) },
+    comms: { modeText: commsModeText(), mode: c.state?.mode, relayName, dsnDishM: c.state?.dsnDishM, band: c.state?.band, maskDeg: c.state?.maskDeg,
+      minAvail: c.minAvail, weight: c.weight, availMean: meanOf(COMMS_ID), availBest: at(COMMS_ID), link, applied: state.G.has(COMMS_ID) },
+    power: design.power, mission: design.mission,
+    sources: (state.manifest?.layers || []).filter(l => state.layers.has(l.id)).map(l => ({ name: l.name, mission: l.mission, agency: l.agency, units: l.units, source: l.source, demo: !!l.demo })),
+    albedo: state.manifest?.albedo_info || null,
+  };
+}
+async function downloadReport() {
+  const d = await buildDesign();
+  const mod = await import('./report.js');
+  return mod.generateReport(d);
 }
 
 // ---------- picking / readout ----------

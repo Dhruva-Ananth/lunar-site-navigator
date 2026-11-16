@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lunar Landing Site Navigator</title>
+<title>LODESTAR — Lunar Landing Site Navigator</title>
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
@@ -14,7 +14,7 @@
 
 <header id="topbar">
   <div class="brand">
-    <h1>Lunar Landing Site Navigator</h1>
+    <h1 title="Lunar Outpost Decision Engine for Site Targeting And Reachability">LODESTAR</h1>
     <div id="status" class="status">Loading…</div>
   </div>
   <ol id="stepper" aria-label="Steps">
@@ -22,7 +22,8 @@
     <li><button data-step="2"><span class="num">2</span><span class="lbl">Terrain</span></button></li>
     <li><button data-step="3"><span class="num">3</span><span class="lbl">Comms</span></button></li>
     <li><button data-step="4"><span class="num">4</span><span class="lbl">Select site</span></button></li>
-    <li><button data-step="5"><span class="num">5</span><span class="lbl">Mission</span></button></li>
+    <li><button data-step="5"><span class="num">5</span><span class="lbl">Power</span></button></li>
+    <li><button data-step="6"><span class="num">6</span><span class="lbl">Mission</span></button></li>
   </ol>
   <div id="area-box" title="Share of the lunar surface (cos-latitude weighted) that passes every limit chosen so far">
     <div class="area-main">
@@ -138,7 +139,7 @@
       <div id="area-actions" hidden>
         <div id="area-sel-title"></div>
         <button id="analyse">Analyse area in detail</button>
-        <button id="to-mission" class="primary">Plan mission to this site →</button>
+        <button id="to-mission" class="primary">Power and mission for this site →</button>
       </div>
       <div id="areas"></div>
     </section>
@@ -180,6 +181,7 @@
   </aside>
 </div>
 
+<div id="power" hidden></div>
 <div id="mission" hidden></div>
 
 <div id="modal" hidden>

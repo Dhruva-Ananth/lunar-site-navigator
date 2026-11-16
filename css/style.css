@@ -234,6 +234,9 @@ button.small { font-size: 12px; padding: 3px 8px; }
 
 /* ---------- step 5: mission (filled by js/mission.js) ---------- */
 #mission { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--bg); display: flex; flex-direction: column; }
+#power { flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; }
+#power[hidden], #mission[hidden] { display: none; }
+.power-host { flex: 1 1 auto; min-height: 0; }
 .mission-host { flex: 1 1 auto; min-height: 0; }
 .mission-fallback { max-width: 760px; margin: 40px auto; padding: 0 20px; }
 

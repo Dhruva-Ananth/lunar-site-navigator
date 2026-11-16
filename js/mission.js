@@ -200,6 +200,8 @@ function injectStyle() {
 .ms-note{font-size:10.5px;color:var(--muted,#8f9bb3);margin:3px 0 0}
 .ms-sum{flex:0 0 auto;background:var(--panel,#141925);border:1px solid var(--border,#2a3347);border-left:4px solid var(--accent,#5fb4ff);border-radius:8px;padding:5px 10px}
 .ms-sum.ms-s-fits{border-left-color:#58c98b}.ms-sum.ms-s-refuel,.ms-sum.ms-s-multi{border-left-color:#ffb020}.ms-sum.ms-s-no,.ms-sum.ms-s-unknown{border-left-color:#ff6b6b}
+.ms-sum{display:flex;gap:12px;align-items:center}.ms-sum-txt{flex:1 1 auto;min-width:0}
+.ms-report{flex:0 0 auto;background:var(--accent,#5fb4ff);color:#06121f;border-color:var(--accent,#5fb4ff);font-weight:600}.ms-report:disabled{opacity:.7;cursor:default}
 .ms-sum-main{font-size:13.5px;font-weight:700}
 .ms-sum-sub{font-size:10.5px;color:var(--muted,#8f9bb3)}
 .ms-err{color:#ff6b6b;padding:8px}
@@ -419,7 +421,7 @@ function basisText(L) {
   }
 }
 
-export async function renderMission(container, { site, onBack } = {}) {
+export async function renderMission(container, { site, onBack, power, onChange, onReport } = {}) {
   injectStyle();
   container.__msStop?.();
   const lat = Math.max(-90, Math.min(90, Number(site?.lat) || 0));
@@ -427,7 +429,9 @@ export async function renderMission(container, { site, onBack } = {}) {
   const coords = fmtLatLon(lat, lon), side = sideOf(lat, lon);
   const label = (site?.label && String(site.label).trim()) || `Site ${coords}`;
   const area = Number.isFinite(site?.areaKm2) && site.areaKm2 > 0 ? ` · area ≈${fmtKg(site.areaKm2)} km²` : '';
-  const state = { landedKg: 2000, ispS: DEFAULTS.ispS, cfgId: 'llo', launcherId: null, userPicked: false };
+  const pwrKg = Number.isFinite(power?.systemMassKg) && power.systemMassKg > 0 ? Math.round(power.systemMassKg) : 0;
+  const state = { landedKg: 2000, ispS: DEFAULTS.ispS, cfgId: 'llo', launcherId: null, userPicked: false, incPower: false };
+  const landed = () => state.landedKg + (state.incPower ? pwrKg : 0);
 
   container.innerHTML = `<div class="ms-root">
     <div class="ms-head">
@@ -435,7 +439,7 @@ export async function renderMission(container, { site, onBack } = {}) {
       <div class="ms-site"><b title="${esc(label)}">${esc(label)}</b><span class="ms-muted">${esc(coords)} · ${esc(side.text)}${esc(area)}</span></div>
       <label class="ms-field" title="Everything that touches down: lander dry mass + payload + residual propellant. One number.">Landed mass on the surface (kg)
         <input type="number" class="ms-mass" min="1" step="100" value="${state.landedKg}" inputmode="decimal"></label>
-      <div class="ms-chips">${MASS_PICKS.map(p => `<button type="button" class="ms-chip" data-kg="${p.kg}" title="Generic round number for this class of lander — not a specific vehicle">${esc(p.label)} · ${fmtKg(p.kg)} kg</button>`).join('')}</div>
+      <div class="ms-chips">${MASS_PICKS.map(p => `<button type="button" class="ms-chip" data-kg="${p.kg}" title="Generic round number for this class of lander — not a specific vehicle">${esc(p.label)} · ${fmtKg(p.kg)} kg</button>`).join('')}${pwrKg ? `<button type="button" class="ms-chip ms-pwr" aria-pressed="false" title="Adds the power system chosen in the Power step (${esc(power.systemText || '')}) to the landed mass">+ power system · ${fmtKg(pwrKg)} kg</button>` : ''}</div>
       <label class="ms-field ms-isp" title="Specific impulse of the lander's own engine, used for every burn after TLI. Typical: storable bipropellant ≈310–325 s, methane/oxygen ≈350–370 s, hydrogen/oxygen ≈440–460 s.">Lander engine Isp (s)
         <input type="number" class="ms-ispin" min="100" max="1000" step="5" value="${state.ispS}" inputmode="decimal"></label>
     </div>
@@ -452,13 +456,20 @@ export async function renderMission(container, { site, onBack } = {}) {
         <div class="ms-det"></div>
       </div>
     </section>
-    <div class="ms-sum"><div class="ms-sum-main">Loading…</div><div class="ms-sum-sub"></div></div>
+    <div class="ms-sum"><div class="ms-sum-txt"><div class="ms-sum-main">Loading…</div><div class="ms-sum-sub"></div></div>${typeof onReport === 'function' ? '<button type="button" class="ms-btn ms-report" title="Builds a PDF with the requirements and the design for this iteration">Download design report (PDF)</button>' : ''}</div>
   </div>`;
   const root = container.firstElementChild;
   const $ = s => root.querySelector(s);
   let stopAnim = () => {};
   container.__msStop = () => { stopAnim(); };
   $('.ms-back').addEventListener('click', () => { stopAnim(); if (typeof onBack === 'function') onBack(); });
+  $('.ms-report')?.addEventListener('click', async ev => {
+    const b = ev.currentTarget, txt = b.textContent;
+    b.disabled = true; b.textContent = 'Building PDF…';
+    try { await onReport(); b.textContent = 'Report downloaded'; }
+    catch (err) { console.warn('[report] failed', err); b.textContent = 'Report failed — see console'; }
+    setTimeout(() => { b.disabled = false; b.textContent = txt; }, 2500);
+  });
 
   let data;
   try { data = await loadLaunchers(); }
@@ -501,6 +512,7 @@ export async function renderMission(container, { site, onBack } = {}) {
   });
   root.querySelector('.ms-chips').addEventListener('click', ev => {
     const b = ev.target.closest('.ms-chip'); if (!b) return;
+    if (b.classList.contains('ms-pwr')) { state.incPower = !state.incPower; update(false); return; }
     state.landedKg = Number(b.dataset.kg); $('.ms-mass').value = state.landedKg; $('.ms-mass').classList.remove('ms-bad'); update(false);
   });
   $('.ms-mass').addEventListener('input', ev => {
@@ -520,7 +532,7 @@ export async function renderMission(container, { site, onBack } = {}) {
     const opts = dv.options;
     const opt = opts.find(o => o.id === state.cfgId) || opts[0];
     state.cfgId = opt.id;
-    const m = missionMasses(state.landedKg, state.ispS, opt);
+    const m = missionMasses(landed(), state.ispS, opt);
     const ctx = { stdTliDv: dv.tli, maxLaunches };
     const verdicts = new Map(launchers.map(L => [L.id, launcherVerdict(L, m, ctx)]));
 
@@ -534,7 +546,10 @@ export async function renderMission(container, { site, onBack } = {}) {
     const v = verdicts.get(L.id);
 
     // chips
-    for (const c of root.querySelectorAll('.ms-chip')) c.classList.toggle('ms-on', Number(c.dataset.kg) === state.landedKg);
+    for (const c of root.querySelectorAll('.ms-chip')) {
+      if (c.classList.contains('ms-pwr')) { c.classList.toggle('ms-on', state.incPower); c.setAttribute('aria-pressed', state.incPower ? 'true' : 'false'); }
+      else c.classList.toggle('ms-on', Number(c.dataset.kg) === state.landedKg);
+    }
 
     // cards
     for (const card of root.querySelectorAll('.ms-card')) {
@@ -554,7 +569,7 @@ export async function renderMission(container, { site, onBack } = {}) {
 
     // configuration buttons
     $('.ms-cfgs').innerHTML = opts.map(o => {
-      const mm = missionMasses(state.landedKg, state.ispS, o), c = CFG[o.id] || { tag: '', short: o.name };
+      const mm = missionMasses(landed(), state.ispS, o), c = CFG[o.id] || { tag: '', short: o.name };
       return `<button type="button" class="ms-cfg${o.id === opt.id ? ' ms-sel' : ''}" role="option" aria-selected="${o.id === opt.id}" data-id="${esc(o.id)}" title="${esc(o.name)}">
         <b>${esc(c.tag)}${c.tag ? ' · ' : ''}${esc(c.short)}</b>
         <span>ΔV ${o.total.toFixed(2)} km/s · ${fmtDaysShort(o.days)} · ${fmtT(mm.mTli)} at TLI</span></button>`;
@@ -569,7 +584,7 @@ export async function renderMission(container, { site, onBack } = {}) {
       </tbody></table>
       <dl class="ms-kv">
         <dt>Transfer time</dt><dd><b>${esc(fmtDays(opt.days))}</b> <span class="ms-muted">— ${esc(opt.timeNote)}</span></dd>
-        <dt>Mass at TLI</dt><dd><b>${fmtKg(m.mTli)} kg</b> <span class="ms-muted">= ${fmtKg(state.landedKg)} kg × e^(${opt.afterTli.toFixed(3)} ÷ ${m.ve.toFixed(3)}); ${fmtKg(m.propAfterTli)} kg (${Math.round(m.propAfterTli / m.mTli * 100)}%) is propellant</span></dd>
+        <dt>Mass at TLI</dt><dd><b>${fmtKg(m.mTli)} kg</b> <span class="ms-muted">= ${fmtKg(landed())} kg${state.incPower ? ` (${fmtKg(state.landedKg)} + ${fmtKg(pwrKg)} power system)` : ''} × e^(${opt.afterTli.toFixed(3)} ÷ ${m.ve.toFixed(3)}); ${fmtKg(m.propAfterTli)} kg (${Math.round(m.propAfterTli / m.mTli * 100)}%) is propellant</span></dd>
         <dt>Mass in LEO</dt><dd><b>${fmtKg(m.mLeo)} kg</b> <span class="ms-muted">only if the lander's own stage also flew TLI (used for LEO-only launchers)</span></dd>
         <dt>Lunar orbit</dt><dd>${esc(inclinationText(opt.id, absLat))}</dd>
       </dl>
@@ -588,7 +603,7 @@ export async function renderMission(container, { site, onBack } = {}) {
 
     // summary
     const c = CFG[opt.id] || { short: opt.name };
-    const what = `${fmtKg(state.landedKg)} kg to ${label}`;
+    const what = `${fmtKg(landed())} kg to ${label}`;
     let main;
     if (v.kind === 'fits') main = `${what} in ${fmtDays(opt.days)}, margin ${fmtPct(v.marginPct)}%`;
     else if (v.kind === 'refuel') main = `${what} in ${fmtDays(opt.days)} — only with in-orbit refuelling: ≈${v.tankers[0] === v.tankers[1] ? v.tankers[0] : v.tankers[0] + '–' + v.tankers[1]} tanker flights (estimate); margin ${fmtPct(v.marginPct)}% on the lift to LEO`;
@@ -604,6 +619,19 @@ export async function renderMission(container, { site, onBack } = {}) {
     $('.ms-sum').className = `ms-sum ms-s-${v.kind}`;
     $('.ms-sum-main').textContent = `${L.name} + ${c.short}: ${main}`;
     $('.ms-sum-sub').textContent = cave.join(' ');
+
+    if (typeof onChange === 'function') {
+      onChange({
+        landedKg: landed(), payloadKg: state.landedKg, powerKgIncluded: state.incPower ? pwrKg : 0, ispS: state.ispS,
+        launcher: { id: L.id, name: L.name, operator: L.operator, country: L.country, config: L.config || '', status: L.status,
+          statusShort: L.status_short || '', leoKg: L.leo_kg, tliText: basisText(L), tliBasis: L.tli_basis || '', source: L.source || '' },
+        verdict: { kind: v.kind, text: v.text, marginPct: v.marginPct, needKg: v.need, capKg: v.cap, basis: v.basis, tankers: v.tankers || null, launches: v.launches || null },
+        config: { id: opt.id, name: opt.name, short: c.short, legs: opt.legs.map(l => ({ name: l.name, kind: l.kind, dv: l.dv })), total: opt.total,
+          afterTli: opt.afterTli, days: opt.days, timeText: fmtDays(opt.days), timeNote: opt.timeNote, inclination: inclinationText(opt.id, absLat), notes: opt.notes },
+        masses: { mTli: m.mTli, mLeo: m.mLeo, propAfterTli: m.propAfterTli },
+        summaryLine: `${L.name} + ${c.short}: ${main}`, caveats: cave, dataAsOf: data.as_of || '',
+      });
+    }
   }
   update('init');
 }
