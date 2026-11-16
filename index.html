@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunar Landing Site Navigator</title>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body data-step="1">
+<div id="demo-banner" hidden>SYNTHETIC DEMO DATA — not real measurements. Run tools/fetch_data.py to load NASA / partner-agency data.</div>
+
+<header id="topbar">
+  <div class="brand">
+    <h1>Lunar Landing Site Navigator</h1>
+    <div id="status" class="status">Loading…</div>
+  </div>
+  <ol id="stepper" aria-label="Steps">
+    <li><button data-step="1"><span class="num">1</span><span class="lbl">Resources</span></button></li>
+    <li><button data-step="2"><span class="num">2</span><span class="lbl">Terrain</span></button></li>
+    <li><button data-step="3"><span class="num">3</span><span class="lbl">Comms</span></button></li>
+    <li><button data-step="4"><span class="num">4</span><span class="lbl">Select site</span></button></li>
+    <li><button data-step="5"><span class="num">5</span><span class="lbl">Mission</span></button></li>
+  </ol>
+  <div id="area-box" title="Share of the lunar surface (cos-latitude weighted) that passes every limit chosen so far">
+    <div class="area-main">
+      <span class="area-cap">Suitable area</span>
+      <span id="area-pct">—</span>
+      <span id="area-km2" class="muted"></span>
+    </div>
+    <div id="funnel" aria-label="How the suitable area shrank step by step"></div>
+  </div>
+  <div class="nav">
+    <button id="back">← Back</button>
+    <button id="next" class="primary">Next →</button>
+  </div>
+</header>
+
+<div id="app">
+  <aside id="sidebar">
+    <!-- STEP 1 -->
+    <section class="step-panel" id="panel-1">
+      <h2><span class="stepno">Step 1</span> Resources</h2>
+      <p class="muted">Say which mineral / volatile deposits matter. <b>Weight</b> ranks cells; <b>min / max</b> are hard limits
+        that remove area. The globe shows what still passes, coloured by score.</p>
+      <div class="presets" id="presets"></div>
+      <div id="preset-note" class="muted small-text"></div>
+      <div id="res-core"></div>
+      <details id="res-more-box" class="inner">
+        <summary>More elements <span id="res-more-count" class="muted"></span></summary>
+        <div id="res-more"></div>
+      </details>
+      <p class="muted small-text">Score = weighted mean of each layer normalised to 0–1 over its 2–98 percentile range
+        (flipped where “low” is preferred). “Best N%” buttons set the limit at an area-weighted percentile of the real map.</p>
+      <div id="msg-1" class="warn-text"></div>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="step-panel" id="panel-2" hidden>
+      <h2><span class="stepno">Step 2</span> Terrain</h2>
+      <div class="frozen" data-sum="1"></div>
+      <div class="group">
+        <div class="group-title">Elevation <span class="muted" id="elev-range"></span></div>
+        <div class="pair">
+          <label>min <input type="number" id="elev-min" step="100"> m</label>
+          <label>max <input type="number" id="elev-max" step="100"> m</label>
+        </div>
+        <div class="muted small-text" id="elev-keeps"></div>
+      </div>
+      <div class="group">
+        <div class="group-title">Slope <span class="muted" id="slope-range"></span></div>
+        <label class="row">Maximum regional slope <output id="slope-max-out"></output>
+          <input type="range" id="slope-max" min="0.5" max="20" step="0.5" value="20"></label>
+        <label class="check"><input type="checkbox" id="slope-on" checked> apply slope limit</label>
+        <label class="row">Slope weight in score (prefers flat) <output id="slope-w-out"></output>
+          <input type="range" id="slope-w" min="0" max="1" step="0.05" value="0.15"></label>
+        <div class="muted small-text" id="slope-keeps"></div>
+        <p class="note small-text" id="slope-note">Slope here is a <b>regional</b> slope computed from the global LOLA grid
+          (~7.6 km per pixel, ~15 km baseline, averaged per grid cell). It is coarse: lander-scale slopes (metres) are
+          steeper and are not resolved. Use “Analyse area in detail” in step 4 for the finer grid.</p>
+      </div>
+      <div class="group">
+        <div class="group-title">Latitude band <span class="muted">(optional)</span></div>
+        <div class="pair">
+          <label>from <input type="number" id="lat-lo" value="-90" min="-90" max="90" step="1"> °</label>
+          <label>to <input type="number" id="lat-hi" value="90" min="-90" max="90" step="1"> °</label>
+        </div>
+      </div>
+      <div class="group">
+        <div class="group-title">Overlay on the Moon</div>
+        <p class="muted small-text">Drape any one map on the globe — independent of the criteria above.</p>
+        <div id="overlay-list" class="overlay-list"></div>
+      </div>
+      <div id="msg-2" class="warn-text"></div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section class="step-panel" id="panel-3" hidden>
+      <h2><span class="stepno">Step 3</span> Communications</h2>
+      <div class="frozen" data-sum="1"></div>
+      <div class="frozen" data-sum="2"></div>
+      <div class="group">
+        <div class="group-title">Link availability</div>
+        <label class="row">Minimum availability (share of time a link to Earth exists) <output id="avail-out"></output>
+          <input type="range" id="avail-min" min="0" max="1" step="0.05" value="0.25"></label>
+        <label class="row">Availability weight in score <output id="avail-w-out"></output>
+          <input type="range" id="avail-w" min="0" max="1" step="0.05" value="0.1"></label>
+        <div class="muted small-text" id="avail-keeps"></div>
+        <p class="note small-text">Choose <b>Direct-to-Earth (DSN)</b> or a <b>lunar relay</b> in the menu on the right; the
+          availability map and the suitable area update with it. Click the Moon to pin a point and see approximate link
+          times there. Availability is a geometric model (no local terrain horizon), not a measurement.</p>
+      </div>
+      <div id="msg-3" class="warn-text"></div>
+    </section>
+
+    <!-- STEP 4 -->
+    <section class="step-panel" id="panel-4" hidden>
+      <h2><span class="stepno">Step 4</span> Select site</h2>
+      <div class="frozen" data-sum="1"></div>
+      <div class="frozen" data-sum="2"></div>
+      <div class="frozen" data-sum="3"></div>
+      <div class="group">
+        <div class="group-title">Matching areas</div>
+        <label class="row">Keep the best <output id="keep-out"></output> of the suitable area (by score)
+          <input type="range" id="keep" min="5" max="100" step="5" value="30"></label>
+        <label class="row">Drop areas smaller than <output id="minarea-out"></output>
+          <input type="range" id="minarea" min="0" max="50000" step="1000" value="5000"></label>
+        <div class="pair">
+          <label>Rank by <select id="area-sort"><option value="score">mean score</option><option value="area">size</option></select></label>
+        </div>
+        <p class="note small-text" id="honesty">These areas come from <b>coarse global maps</b>: Lunar Prospector element maps have
+          ~15–150 km pixels and the LOLA grid used here is 7.6 km per pixel, evaluated on a <span id="grid-txt">1°</span> grid.
+          Treat the outlines and km² as regional guidance, not surveyed boundaries.</p>
+      </div>
+      <div id="areas-msg"></div>
+      <div id="area-actions" hidden>
+        <div id="area-sel-title"></div>
+        <button id="analyse">Analyse area in detail</button>
+        <button id="to-mission" class="primary">Plan mission to this site →</button>
+      </div>
+      <div id="areas"></div>
+    </section>
+
+    <details id="view-box">
+      <summary>View &amp; grid</summary>
+      <label class="row">Terrain exaggeration <output id="exag-out">10×</output>
+        <input type="range" id="exag" min="1" max="30" step="1" value="10"></label>
+      <label class="row">Sun longitude <output id="sun-out">-40°</output>
+        <input type="range" id="sun" min="-180" max="180" step="5" value="-40"></label>
+      <label class="check"><input type="checkbox" id="graticule" checked> Lat/lon graticule (30°)</label>
+      <div class="pair">
+        <label>Analysis grid <select id="grid-step"><option value="1" selected>1° × 1° (64,800 cells)</option><option value="0.5">0.5° × 0.5° (259,200 cells)</option></select></label>
+      </div>
+      <button id="reset-view" class="small">Reset view (near side)</button>
+    </details>
+    <details id="sources-box">
+      <summary>Data sources</summary>
+      <div id="sources"></div>
+    </details>
+  </aside>
+
+  <main id="view">
+    <canvas id="globe"></canvas>
+    <div id="overlay-bar">
+      <label>Overlay <select id="overlay-select" aria-label="Overlay on the Moon"></select></label>
+      <label>Opacity <input type="range" id="opacity" min="0" max="1" step="0.05" value="0.75" aria-label="Overlay opacity"><output id="opacity-out">75%</output></label>
+      <span id="view-btns" title="Turn the Moon">
+        <button class="small" data-view="0,0" title="Near side (faces Earth)">Near</button><button class="small" data-view="0,180" title="Far side">Far</button><button class="small" data-view="84,0" title="North pole">N pole</button><button class="small" data-view="-84,0" title="South pole">S pole</button><button class="small" data-view="best" title="Turn to the best-scoring cell that still passes">Best ★</button>
+      </span>
+    </div>
+    <div id="busy" hidden>computing…</div>
+    <div id="legend" hidden></div>
+    <div id="readout"><div class="muted">Hover the globe for values; click to pin a point.</div></div>
+  </main>
+
+  <aside id="comms-col" hidden>
+    <div id="comms-menu"></div>
+  </aside>
+</div>
+
+<div id="mission" hidden></div>
+
+<div id="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2 id="modal-title">Region</h2>
+      <div class="tabs" id="tabs">
+        <button data-tab="region" class="active">Region analysis</button>
+        <button data-tab="comms">Earth comms</button>
+        <button data-tab="deltav">Delta-V</button>
+      </div>
+      <button id="modal-close" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="pane" id="pane-region"></div>
+      <div class="pane" id="pane-comms" hidden></div>
+      <div class="pane" id="pane-deltav" hidden></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
